@@ -48,7 +48,18 @@ function token(bytes = Number(process.env.PUBLIC_LINK_TOKEN_BYTES || 32)) { retu
 function appAdminEmails() { return String(process.env.APP_ADMIN_EMAILS || '').split(',').map(normalizeEmail).filter(Boolean); }
 function isAppAdminEmail(email) { return appAdminEmails().includes(normalizeEmail(email)); }
 function stripHtml(text) { return String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+function escapeHtmlServer(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function monthStartIso(date = new Date()) { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString(); }
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
 
 function publicUser(user, subscription = null, memberships = []) {
   if (!user) return null;
@@ -123,6 +134,7 @@ async function requireAppAdmin(req, res, next) {
 async function requireSurveyOwner(req, res, next) {
   try {
     const surveyId = req.params.id || req.params.surveyId;
+    if (!isUuid(surveyId)) return res.status(400).json({ error: 'Invalid or missing survey id.' });
     const result = await query('SELECT * FROM surveys WHERE id = $1', [surveyId]);
     const survey = result.rows[0];
     if (!survey) return res.status(404).json({ error: 'Survey not found.' });
@@ -795,8 +807,10 @@ app.post('/api/surveys/:id/send-email', requireUser, requireSurveyOwner, async (
       share = await query(`INSERT INTO survey_share_links(survey_id, token, version, scope) VALUES($1,$2,1,'survey') RETURNING *`, [req.survey.id, token()]);
     }
     const url = questionPublicUrl(share.rows[0]);
-    const html = `${body.replace(/\n/g, '<br>')}<p><a href="${url}">Open survey</a></p>`;
-    await sendMail({ fromEmail: req.user.email, to: [...recipients].join(','), subject, html, replyTo: req.user.email });
+    const bodyWithLink = body.includes(url) ? body : `${body}\n\nOpen survey: ${url}`;
+    const htmlBody = escapeHtmlServer(bodyWithLink).replace(/\n/g, '<br>');
+    const html = `${htmlBody}<p><a href="${url}">Open survey</a></p>`;
+    await sendMail({ fromEmail: req.user.email, to: [...recipients].join(','), subject, html, text: bodyWithLink, replyTo: req.user.email });
     const send = await query('INSERT INTO email_sends(survey_id, sent_by_user_id, subject, body, from_email, recipient_count, status) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *', [req.survey.id, req.user.id, subject, html, req.user.email, recipients.size, 'sent']);
     res.json({ ok: true, sent: send.rows[0], recipients: recipients.size, url });
   } catch (error) { next(error); }

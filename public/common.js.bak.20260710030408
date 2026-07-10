@@ -41,7 +41,7 @@ const Athena = (() => {
   }
   function nav(active) {
     const links = [
-      ['app.html','Dashboard'],['surveys.html','Surveys'],['survey-new.html','Create'],['subscription.html','Subscription'],['org-admin.html','Enterprise'],['app-admin.html','App Admin']
+      ['app.html','Dashboard'],['surveys.html','Surveys'],['survey-new.html','Create'],['survey-responses.html','Responses'],['survey-email.html','Email'],['subscription.html','Subscription'],['org-admin.html','Enterprise'],['app-admin.html','App Admin']
     ];
     return `<aside class="sidebar"><a class="brand" href="/app.html"><span class="brand-mark">A</span><span><strong>Athena</strong> Survey</span></a><div style="height:18px"></div>${links.map(([href,label]) => `<a class="${active===href?'active':''}" href="/${href}">${label}</a>`).join('')}</aside>`;
   }
