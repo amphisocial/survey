@@ -54,46 +54,13 @@ const Athena = (() => {
     if (!fp) { fp = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`; localStorage.setItem(key, fp); }
     return fp;
   }
-  function tagTone(index) {
-    const tones = ['tone-indigo', 'tone-violet', 'tone-blue', 'tone-emerald', 'tone-rose', 'tone-amber', 'tone-slate'];
-    return tones[index % tones.length];
-  }
-
-  function tagWeightClass(weight) {
-    if (weight >= 0.82) return 'weight-xl';
-    if (weight >= 0.62) return 'weight-lg';
-    if (weight >= 0.42) return 'weight-md';
-    if (weight >= 0.22) return 'weight-sm';
-    return 'weight-xs';
-  }
-
-  function renderTagCloud(tags) {
-    if (!tags?.length) return '<p class="muted">No tag responses yet.</p>';
-
-    const sorted = [...tags]
-      .filter(t => String(t.text || '').trim())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 40);
-
-    const max = Math.max(...sorted.map(t => Number(t.count) || 0), 1);
-    const min = Math.min(...sorted.map(t => Number(t.count) || 0), max);
-    const spread = Math.max(max - min, 1);
-
-    return `<div class="tag-cloud proper" aria-label="Live tag cloud">${
-      sorted.map((t, i) => {
-        const count = Number(t.count) || 0;
-        const weight = (count - min) / spread;
-        const size = Math.round(15 + weight * 33);
-        const rotation = [-4, 2, -2, 4, 0, -1, 3][i % 7];
-        const cls = `${tagTone(i)} ${tagWeightClass(weight)}`;
-        return `<span class="cloud-tag ${cls}" title="${escapeHtml(t.text)} — ${count} response${count === 1 ? '' : 's'}" style="--tag-size:${size}px;--tag-rotate:${rotation}deg">${escapeHtml(t.text)}</span>`;
-      }).join('')
-    }</div>`;
-  }
-
   function renderResults(results) {
     if (!results) return '<p class="muted">No results yet.</p>';
-    if (results.tags) return renderTagCloud(results.tags);
+    if (results.tags) {
+      if (!results.tags.length) return '<p class="muted">No tag responses yet.</p>';
+      const max = Math.max(...results.tags.map(t => t.count), 1);
+      return `<div class="tag-cloud">${results.tags.map(t => `<span class="tag" style="font-size:${Math.max(14, Math.min(34, 14 + (t.count / max) * 20))}px">${escapeHtml(t.text)} <small>${t.count}</small></span>`).join('')}</div>`;
+    }
     if (!results.options?.length) return '<p class="muted">No options yet.</p>';
     const total = Math.max(results.totalSelections || 0, 1);
     return results.options.map(o => `<div class="result-row"><div><strong>${escapeHtml(o.option_text)}</strong><div class="chart-bar"><span style="width:${Math.max(0, Math.round((o.count/total)*100))}%"></span></div></div><div><strong>${o.count}</strong> <span class="muted">${o.pct}%</span></div></div>`).join('');

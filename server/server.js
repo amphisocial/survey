@@ -495,9 +495,50 @@ app.patch('/api/surveys/:id', requireUser, requireSurveyOwner, async (req, res, 
 });
 
 async function updateSurveyStatus(req, res, status) {
-  const result = await query(`UPDATE surveys SET status=$1, closed_at=CASE WHEN $1='closed' THEN now() ELSE closed_at END, updated_at=now() WHERE id=$2 RETURNING *`, [status, req.survey.id]);
-  io.to(`survey:${req.survey.id}`).emit('survey:status', result.rows[0]);
-  res.json({ survey: result.rows[0] });
+  const payload = await tx(async (client) => {
+    const surveyResult = await client.query(`
+      UPDATE surveys
+      SET
+        status = $1,
+        closed_at = CASE WHEN $1 = 'closed' THEN now() ELSE closed_at END,
+        current_active_question_id = CASE WHEN $1 = 'closed' THEN NULL ELSE current_active_question_id END,
+        updated_at = now()
+      WHERE id = $2
+      RETURNING *
+    `, [status, req.survey.id]);
+
+    let completedQuestions = [];
+    if (status === 'closed') {
+      const questionResult = await client.query(`
+        UPDATE survey_questions
+        SET
+          status = 'completed',
+          completed_at = COALESCE(completed_at, now()),
+          updated_at = now()
+        WHERE survey_id = $1
+          AND status <> 'completed'
+        RETURNING *
+      `, [req.survey.id]);
+      completedQuestions = questionResult.rows;
+    }
+
+    return {
+      survey: surveyResult.rows[0],
+      completedQuestions
+    };
+  });
+
+  io.to(`survey:${req.survey.id}`).emit('survey:status', payload.survey);
+
+  if (status === 'closed') {
+    io.to(`survey:${req.survey.id}`).emit('question:activated', null);
+    for (const question of payload.completedQuestions) {
+      io.to(`survey:${req.survey.id}`).emit('question:status', question);
+      await broadcastQuestionResults(io, question.id);
+    }
+  }
+
+  res.json(payload);
 }
 app.post('/api/surveys/:id/activate', requireUser, requireSurveyOwner, (req, res, next) => updateSurveyStatus(req, res, 'active').catch(next));
 app.post('/api/surveys/:id/inactivate', requireUser, requireSurveyOwner, (req, res, next) => updateSurveyStatus(req, res, 'inactive').catch(next));
