@@ -17,7 +17,7 @@ Phases 1-13 of the web-based MVP:
 9. QR code generation/regeneration/unshare
 10. Live results with Socket.IO
 11. Email send via SMTP config from `.env`
-12. Stripe Basic/Pro/Enterprise subscription wiring
+12. Stripe Pro/Enterprise subscription wiring; Basic is free at $0/mo with 5 surveys/month
 13. Enterprise org admin and global app admin pages
 
 Platform-native chat adapters are intentionally deferred.
@@ -96,7 +96,7 @@ CONTACT_FORM_TO=anu@threadwire.ai
 APP_ADMIN_EMAILS=anuranjanm@gmail.com,anu@threadwire.ai
 ```
 
-Set AI and Stripe variables when ready.
+Set AI and Stripe variables when ready. For Stripe, Basic does not need a price because it is free. Use `STRIPE_PRICE_PRO` and `STRIPE_PRICE_ENTERPRISE`. `STRIPE_PRICE_BASIC` is ignored/optional. `STRIPE_PRICE_ENTERPRISE_STARTER` is still accepted as a backward-compatible alias.
 
 ### 5. Google OAuth
 
@@ -173,6 +173,6 @@ Expected:
 
 ## Notes
 
-- `ENABLE_FREE_BASIC=true` lets Basic creation work without Stripe during MVP testing. Set it to `false` when you want to require paid checkout.
+- Basic is intentionally free at `$0/mo` and includes 5 surveys/month. `ENABLE_FREE_BASIC=true` keeps this enabled; only set it to `false` if you temporarily want to disable all free creation.
 - SMTP providers may reject a user email as the actual `From` address unless that sender/domain is verified. The code sets `replyTo` to the user email as a fallback-friendly pattern.
 - Public participants do not need accounts.

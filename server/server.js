@@ -26,6 +26,9 @@ const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'athena_survey_session';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-only-session-secret';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const STRIPE_PRICE_ENTERPRISE = process.env.STRIPE_PRICE_ENTERPRISE || process.env.STRIPE_PRICE_ENTERPRISE_STARTER;
+// Basic is intentionally free. Set ENABLE_FREE_BASIC=false only if you want to temporarily disable all free creation.
+const FREE_BASIC_ENABLED = process.env.ENABLE_FREE_BASIC !== 'false';
 
 const PLAN_LIMITS = {
   basic: { label: 'Basic', surveysPerMonth: Number(process.env.BASIC_MONTHLY_SURVEY_LIMIT || 5), userLimit: 1 },
@@ -36,7 +39,7 @@ const PLAN_LIMITS = {
 const STRIPE_PRICE_TO_PLAN = Object.fromEntries([
   [process.env.STRIPE_PRICE_BASIC, 'basic'],
   [process.env.STRIPE_PRICE_PRO, 'pro'],
-  [process.env.STRIPE_PRICE_ENTERPRISE_STARTER, 'enterprise']
+  [STRIPE_PRICE_ENTERPRISE, 'enterprise']
 ].filter(([price]) => Boolean(price)));
 
 function nowIso() { return new Date().toISOString(); }
@@ -49,7 +52,7 @@ function monthStartIso(date = new Date()) { return new Date(Date.UTC(date.getUTC
 
 function publicUser(user, subscription = null, memberships = []) {
   if (!user) return null;
-  const plan = subscription?.plan || (process.env.ENABLE_FREE_BASIC === 'true' ? 'basic' : 'none');
+  const plan = subscription?.plan || (FREE_BASIC_ENABLED ? 'basic' : 'none');
   return {
     id: user.id,
     email: user.email,
@@ -59,7 +62,7 @@ function publicUser(user, subscription = null, memberships = []) {
     isAppAdmin: user.role_global === 'app_admin',
     plan,
     planLabel: PLAN_LIMITS[plan]?.label || 'No plan',
-    subscriptionStatus: subscription?.status || (process.env.ENABLE_FREE_BASIC === 'true' ? 'basic_enabled' : 'inactive'),
+    subscriptionStatus: subscription?.status || (FREE_BASIC_ENABLED ? 'basic_free' : 'inactive'),
     limits: PLAN_LIMITS[plan] || { surveysPerMonth: 0, userLimit: 1 },
     memberships
   };
@@ -73,7 +76,7 @@ async function getSubscriptionForUser(userId) {
     LIMIT 1
   `, [userId]);
   if (result.rows[0]) return result.rows[0];
-  if (process.env.ENABLE_FREE_BASIC === 'true') return { owner_user_id: userId, plan: 'basic', status: 'active' };
+  if (FREE_BASIC_ENABLED) return { owner_user_id: userId, plan: 'basic', status: 'active', is_free_default: true };
   return null;
 }
 
@@ -175,7 +178,7 @@ async function canCreateSurvey(user) {
   const plan = sub?.plan || 'none';
   const limit = PLAN_LIMITS[plan]?.surveysPerMonth || 0;
   const status = sub?.status || 'inactive';
-  const active = ['active', 'trialing', 'basic_enabled'].includes(status) || process.env.ENABLE_FREE_BASIC === 'true';
+  const active = ['active', 'trialing', 'basic_enabled', 'basic_free'].includes(status) || (FREE_BASIC_ENABLED && plan === 'basic');
   const usage = await query('SELECT count(*)::int AS count FROM surveys WHERE owner_user_id = $1 AND created_at >= $2', [user.id, monthStartIso()]);
   const used = usage.rows[0]?.count || 0;
   return { ok: active && used < limit, used, limit, remaining: Math.max(0, limit - used), plan, status };
@@ -298,22 +301,6 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
 });
 
 app.use(express.json({ limit: '4mb' }));
-
-// Block common scanner probes for secrets before static routing.
-app.use((req, res, next) => {
-  const url = String(req.path || '').toLowerCase();
-  if (
-    url.includes('credentials.json') ||
-    url.includes('service-account.json') ||
-    url.includes('.env') ||
-    url.includes('config.json') ||
-    url.includes('secrets')
-  ) {
-    return res.status(404).send('Not found');
-  }
-  next();
-});
-
 app.use(express.static(PUBLIC_DIR));
 
 io.on('connection', (socket) => {
@@ -443,7 +430,7 @@ app.get('/api/surveys', requireUser, async (req, res, next) => {
 app.post('/api/surveys', requireUser, async (req, res, next) => {
   try {
     const usage = await canCreateSurvey(req.user);
-    if (!usage.ok) return res.status(429).json({ error: `Survey limit reached or subscription inactive. Current plan: ${usage.plan}.`, usage });
+    if (!usage.ok) return res.status(429).json({ error: usage.plan === 'basic' ? `Basic includes ${usage.limit} surveys per month. You have used ${usage.used}. Upgrade to Pro for unlimited surveys.` : `Survey limit reached or subscription inactive. Current plan: ${usage.plan}.`, usage });
     const organizationId = req.body.organizationId || null;
     await assertEnterpriseCreator(req.user, organizationId);
     const title = String(req.body.title || 'Untitled Survey').trim().slice(0, 120);
@@ -817,9 +804,12 @@ app.post('/api/surveys/:id/send-email', requireUser, requireSurveyOwner, async (
 
 app.post('/api/billing/checkout', requireUser, async (req, res, next) => {
   try {
-    if (!stripe) return res.status(400).json({ error: 'Stripe is not configured.' });
     const plan = ['basic','pro','enterprise'].includes(req.body.plan) ? req.body.plan : 'pro';
-    const priceMap = { basic: process.env.STRIPE_PRICE_BASIC, pro: process.env.STRIPE_PRICE_PRO, enterprise: process.env.STRIPE_PRICE_ENTERPRISE_STARTER };
+    if (plan === 'basic') {
+      return res.json({ url: `${APP_BASE_URL}/subscription.html?basic=1`, message: 'Basic is free and already available.' });
+    }
+    if (!stripe) return res.status(400).json({ error: 'Stripe is not configured.' });
+    const priceMap = { pro: process.env.STRIPE_PRICE_PRO, enterprise: STRIPE_PRICE_ENTERPRISE };
     const price = priceMap[plan];
     if (!price) return res.status(400).json({ error: `Stripe price is not configured for ${plan}.` });
     const session = await stripe.checkout.sessions.create({
@@ -964,9 +954,9 @@ app.patch('/api/admin/orgs/:orgId', requireAppAdmin, async (req, res, next) => {
 app.get('/api/admin/tiers', requireAppAdmin, (req, res) => {
   res.json({
     tiers: {
-      basic: { ...PLAN_LIMITS.basic, stripePrice: process.env.STRIPE_PRICE_BASIC || null },
+      basic: { ...PLAN_LIMITS.basic, monthlyPrice: 0, stripePrice: null },
       pro: { ...PLAN_LIMITS.pro, stripePrice: process.env.STRIPE_PRICE_PRO || null, monthlyPrice: 5.99 },
-      enterprise: { ...PLAN_LIMITS.enterprise, stripePrice: process.env.STRIPE_PRICE_ENTERPRISE_STARTER || null, startingPrice: Number(process.env.ENTERPRISE_STARTING_PRICE || 49.99) }
+      enterprise: { ...PLAN_LIMITS.enterprise, stripePrice: STRIPE_PRICE_ENTERPRISE || null, startingPrice: Number(process.env.ENTERPRISE_STARTING_PRICE || 49.99) }
     }
   });
 });
@@ -975,34 +965,13 @@ app.get('/api/admin/tiers', requireAppAdmin, (req, res) => {
 app.get('/s/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'public-survey.html')));
 app.get('/q/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'public-question.html')));
 app.get('/live/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'live-results.html')));
-const APP_PAGES = new Set([
-  'surveys',
-  'survey-new',
-  'survey-detail',
-  'survey-questions',
-  'survey-responses',
-  'survey-share',
-  'survey-email',
-  'subscription',
-  'org-admin',
-  'app-admin'
-]);
-
 app.get('/app', (req, res) => res.redirect('/app.html'));
-app.get('/app/:page', (req, res) => {
-  const page = String(req.params.page || '').toLowerCase();
-  if (!APP_PAGES.has(page)) return res.status(404).send('Not found');
-  return res.sendFile(path.join(PUBLIC_DIR, `${page}.html`));
-});
+app.get('/app/:page', (req, res) => res.sendFile(path.join(PUBLIC_DIR, `${req.params.page}.html`)));
 
 app.use((error, req, res, next) => {
-  const status = error.status || error.statusCode || 500;
-  if (status === 404) {
-    return res.status(404).send('Not found');
-  }
   console.error('[error]', error);
   if (res.headersSent) return next(error);
-  res.status(status).json({ error: error.message || 'Something went wrong.' });
+  res.status(error.status || 500).json({ error: error.message || 'Something went wrong.' });
 });
 
 server.listen(PORT, () => {
