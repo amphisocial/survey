@@ -4,6 +4,7 @@
  */
 const path = require('path');
 const crypto = require('crypto');
+const PDFDocument = require('pdfkit');
 const http = require('http');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -11,7 +12,6 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const Stripe = require('stripe');
 const QRCode = require('qrcode');
-const PDFDocument = require('pdfkit');
 const { Server } = require('socket.io');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
@@ -259,13 +259,36 @@ function questionPublicUrl(link) {
   return `${APP_BASE_URL}/s/${link.token}`;
 }
 
-
-function reportAppUrl() {
-  return String(process.env.APP_BASE_URL || APP_BASE_URL || 'https://survey.athenabot.ai').replace(/\/$/, '');
-}
-
 function pdfSafe(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function percent(count, total) {
+  if (!total) return 0;
+  return Math.round((Number(count || 0) / total) * 100);
+}
+
+function drawBarResult(doc, optionText, count, pct, x, y, width) {
+  const barWidth = width - 120;
+  doc
+    .fontSize(10)
+    .fillColor('#0f172a')
+    .text(pdfSafe(optionText), x, y, { width: barWidth });
+
+  doc
+    .roundedRect(x, y + 18, barWidth, 10, 4)
+    .fill('#e2e8f0');
+
+  doc
+    .roundedRect(x, y + 18, Math.max(2, Math.round(barWidth * pct / 100)), 10, 4)
+    .fill('#2563eb');
+
+  doc
+    .fontSize(10)
+    .fillColor('#475569')
+    .text(`${count} (${pct}%)`, x + barWidth + 12, y + 12, { width: 90 });
+
+  return y + 40;
 }
 
 function titleCaseTag(text) {
@@ -276,146 +299,46 @@ function titleCaseTag(text) {
     .join(' ');
 }
 
-function addPdfFooter(doc) {
-  // IMPORTANT:
-  // Keep footer inside PDFKit's printable area.
-  // If we draw too close to the physical bottom, PDFKit auto-adds a blank page.
-  const oldX = doc.x;
-  const oldY = doc.y;
-  const url = reportAppUrl();
-  const footerText = `Generated with Athena Survey • Create live AI polls at ${url}`;
-
-  const footerY = doc.page.height - 66;
-  const lineY = footerY - 12;
-
-  doc
-    .moveTo(50, lineY)
-    .lineTo(doc.page.width - 50, lineY)
-    .strokeColor('#e2e8f0')
-    .stroke();
-
-  doc
-    .font('Helvetica')
-    .fontSize(8)
-    .fillColor('#64748b')
-    .text(footerText, 50, footerY, {
-      width: doc.page.width - 100,
-      align: 'center',
-      lineBreak: false,
-      height: 10,
-      link: url
-    });
-
-  doc.x = oldX;
-  doc.y = oldY;
-}
-function drawReportCoverPage(doc, survey, questions) {
-  const url = reportAppUrl();
-
-  doc.rect(0, 0, doc.page.width, 176).fill('#eef2ff');
-  doc.circle(492, 72, 94).fill('#dbeafe');
-  doc.circle(86, 126, 50).fill('#ede9fe');
-
-  doc.roundedRect(50, 52, 48, 48, 14).fill('#2563eb');
-  doc.font('Helvetica-Bold').fontSize(24).fillColor('#ffffff').text('A', 65, 64, {
-    width: 20,
-    align: 'center'
-  });
-
-  doc.font('Helvetica-Bold').fontSize(22).fillColor('#0f172a').text('Athena Survey', 112, 55);
-  doc.font('Helvetica').fontSize(10).fillColor('#475569')
-    .text('AI-powered live polls, QR surveys, and real-time audience insights.', 112, 84);
-
-  doc.font('Helvetica-Bold').fontSize(28).fillColor('#0f172a')
-    .text(pdfSafe(survey.title || 'Survey Results'), 50, 210, {
-      width: 500,
-      lineGap: 4
-    });
-
-  doc.font('Helvetica').fontSize(12).fillColor('#475569')
-    .text(`Survey status: ${survey.status}`, 50, doc.y + 18)
-    .text(`Questions: ${questions.length}`)
-    .text(`Exported: ${new Date().toLocaleString()}`);
-
-  if (survey.description) {
-    doc.moveDown();
-    doc.fontSize(11).fillColor('#334155').text(pdfSafe(survey.description), {
-      width: 500,
-      lineGap: 3
-    });
-  }
-
-  const boxY = Math.max(doc.y + 34, 430);
-
-  doc.roundedRect(50, boxY, 500, 138, 18).fill('#f8fafc').stroke('#e2e8f0');
-
-  doc.font('Helvetica-Bold').fontSize(15).fillColor('#0f172a')
-    .text('Create reports like this with Athena Survey', 74, boxY + 24);
-
-  doc.font('Helvetica').fontSize(11).fillColor('#334155')
-    .text('• Talk to AI and let it create the right survey questions', 74, boxY + 54)
-    .text('• Share instantly with a QR code or public link')
-    .text('• Show live charts, tag clouds, and audience results')
-    .text('• Export branded PDF reports for teams, customers, and events');
-
-  doc.font('Helvetica-Bold').fontSize(11).fillColor('#2563eb')
-    .text(url, 74, boxY + 114, {
-      link: url,
-      underline: true
-    });
-
-  addPdfFooter(doc);
-}
-
-function drawBarResultPdf(doc, optionText, count, pct, x, y, width) {
-  const barWidth = width - 130;
-
-  doc.font('Helvetica-Bold').fontSize(10).fillColor('#0f172a')
-    .text(pdfSafe(optionText), x, y, { width: barWidth });
-
-  doc.roundedRect(x, y + 18, barWidth, 10, 4).fill('#e2e8f0');
-  doc.roundedRect(x, y + 18, Math.max(2, Math.round(barWidth * pct / 100)), 10, 4).fill('#2563eb');
-
-  doc.font('Helvetica').fontSize(10).fillColor('#475569')
-    .text(`${count} (${pct}%)`, x + barWidth + 14, y + 12, { width: 100 });
-
-  return y + 42;
-}
-
 function drawTagCloudPdf(doc, tags, x, y, width) {
   if (!tags || !tags.length) {
-    doc.font('Helvetica').fontSize(10).fillColor('#64748b').text('No tag responses yet.', x, y);
+    doc.fontSize(10).fillColor('#64748b').text('No tag responses yet.', x, y);
     return y + 24;
   }
 
   const sorted = [...tags]
     .filter(t => String(t.text || '').trim())
     .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
-    .slice(0, 30);
+    .slice(0, 35);
 
   const max = Math.max(...sorted.map(t => Number(t.count || 0)), 1);
   const min = Math.min(...sorted.map(t => Number(t.count || 0)), max);
   const spread = Math.max(max - min, 1);
   const colors = ['#4338ca', '#7c3aed', '#0369a1', '#047857', '#be123c', '#b45309', '#334155'];
 
-  doc.roundedRect(x, y, width, 178, 18).fill('#f8fafc').stroke('#e2e8f0');
+  // Soft cloud container.
+  doc
+    .roundedRect(x, y, width, 170, 18)
+    .fill('#f8fafc')
+    .stroke('#e2e8f0');
 
   let cx = x + 22;
   let cy = y + 28;
   let rowHeight = 0;
-  const bottomY = y + 154;
+  const maxY = y + 150;
 
-  for (let index = 0; index < sorted.length; index += 1) {
-    const tag = sorted[index];
+  sorted.forEach((tag, index) => {
     const count = Number(tag.count || 0);
     const weight = (count - min) / spread;
-    const size = 13 + Math.round(weight * 18);
-    const label = titleCaseTag(tag.text).slice(0, 32);
 
-    doc.font('Helvetica-Bold').fontSize(size);
-    const labelWidth = doc.widthOfString(label);
-    const chipWidth = labelWidth + 22;
-    const chipHeight = size + 12;
+    // Tighter scale so words look like a cloud but do not collide.
+    const size = 12 + Math.round(weight * 18);
+    const label = titleCaseTag(tag.text).slice(0, 34);
+
+    doc.fontSize(size).font('Helvetica-Bold');
+
+    const textWidth = doc.widthOfString(label);
+    const chipWidth = textWidth + 18;
+    const chipHeight = size + 10;
 
     if (cx + chipWidth > x + width - 20) {
       cx = x + 22;
@@ -423,375 +346,62 @@ function drawTagCloudPdf(doc, tags, x, y, width) {
       rowHeight = 0;
     }
 
-    if (cy + chipHeight > bottomY) break;
+    // If cloud area is full, stop drawing extra low-frequency tags.
+    if (cy + chipHeight > maxY) return;
 
-    doc.roundedRect(cx - 6, cy - 5, chipWidth, chipHeight, 11).fill('#ffffff').stroke('#e2e8f0');
+    doc
+      .roundedRect(cx - 6, cy - 4, chipWidth, chipHeight, 10)
+      .fill('#ffffff')
+      .stroke('#e2e8f0');
 
-    doc.font('Helvetica-Bold').fontSize(size).fillColor(colors[index % colors.length])
-      .text(label, cx + 4, cy, {
+    doc
+      .fontSize(size)
+      .font('Helvetica-Bold')
+      .fillColor(colors[index % colors.length])
+      .text(label, cx + 3, cy, {
         width: chipWidth,
         lineBreak: false
       });
 
-    cx += chipWidth + 12;
+    cx += chipWidth + 10;
     rowHeight = Math.max(rowHeight, chipHeight);
-  }
+  });
 
   doc.font('Helvetica');
-  return y + 204;
+  return y + 195;
+}
+function reportAppUrl() {
+  return String(process.env.APP_BASE_URL || 'https://survey.athenabot.ai').replace(/\/$/, '');
 }
 
+function addPdfFooter(doc) {
+  // Draw branded footer without changing active content cursor.
+  const oldX = doc.x;
+  const oldY = doc.y;
+  const url = reportAppUrl();
+  const footerText = `Generated with Athena Survey • Create live AI polls at ${url}`;
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: true, credentials: true } });
+  doc
+    .moveTo(50, doc.page.height - 58)
+    .lineTo(doc.page.width - 50, doc.page.height - 58)
+    .strokeColor('#e2e8f0')
+    .stroke();
 
-app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(rateLimit({ windowMs: 60 * 1000, max: 240 }));
-app.use(cookieParser());
-
-app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('Stripe is not configured.');
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (error) {
-    return res.status(400).send(`Webhook signature failed: ${error.message}`);
-  }
-  try {
-    const obj = event.data.object;
-    if (event.type === 'checkout.session.completed') {
-      const plan = obj.metadata?.plan;
-      const userId = obj.metadata?.userId || null;
-      const organizationId = obj.metadata?.organizationId || null;
-      if (plan && (userId || organizationId)) {
-        await query(`
-          INSERT INTO subscriptions(owner_user_id, organization_id, plan, status, stripe_customer_id, stripe_subscription_id, updated_at)
-          VALUES($1, $2, $3, 'active', $4, $5, now())
-          ON CONFLICT DO NOTHING
-        `, [userId, organizationId, plan, obj.customer, obj.subscription]);
-        await query(`
-          UPDATE subscriptions SET plan=$1, status='active', stripe_customer_id=$2, stripe_subscription_id=$3, updated_at=now()
-          WHERE (owner_user_id = $4 OR organization_id = $5)
-        `, [plan, obj.customer, obj.subscription, userId, organizationId]);
-      }
-    }
-    if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
-      const sub = obj;
-      const priceId = sub.items?.data?.[0]?.price?.id;
-      const plan = STRIPE_PRICE_TO_PLAN[priceId] || sub.metadata?.plan;
-      await query(`
-        UPDATE subscriptions SET plan=COALESCE($1, plan), status=$2, current_period_start=to_timestamp($3), current_period_end=to_timestamp($4), updated_at=now()
-        WHERE stripe_subscription_id=$5 OR stripe_customer_id=$6
-      `, [plan, sub.status, sub.current_period_start || null, sub.current_period_end || null, sub.id, sub.customer]);
-    }
-    if (event.type === 'customer.subscription.deleted') {
-      await query(`UPDATE subscriptions SET status='canceled', updated_at=now() WHERE stripe_subscription_id=$1`, [obj.id]);
-    }
-    res.json({ received: true });
-  } catch (error) {
-    console.error('[stripe:webhook]', error);
-    res.status(500).send('Webhook handler failed.');
-  }
-});
-
-app.use(express.json({ limit: '4mb' }));
-app.use(express.static(PUBLIC_DIR));
-
-io.on('connection', (socket) => {
-  socket.on('join:survey', (surveyId) => { if (surveyId) socket.join(`survey:${surveyId}`); });
-  socket.on('join:question', (questionId) => { if (questionId) socket.join(`question:${questionId}`); });
-});
-
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'athena-survey', time: nowIso() }));
-
-app.get('/api/me', async (req, res, next) => {
-  try {
-    const user = await currentUser(req);
-    if (!user) return res.json({ user: null });
-    const subscription = await getSubscriptionForUser(user.id);
-    const memberships = await getMemberships(user.id, user.email);
-    const usage = await canCreateSurvey(user);
-    res.json({ user: publicUser(user, subscription, memberships), usage });
-  } catch (error) { next(error); }
-});
-
-app.get('/auth/google', (req, res) => {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return res.status(400).send('Google OAuth is not configured yet. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env.');
-  }
-  const state = crypto.createHmac('sha256', SESSION_SECRET).update(token(16)).digest('hex');
-  res.cookie('athena_survey_google_state', state, { httpOnly: true, sameSite: 'lax', secure: NODE_ENV === 'production', maxAge: 1000 * 60 * 10, path: '/' });
-  const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID,
-    redirect_uri: `${APP_BASE_URL}/auth/google/callback`,
-    response_type: 'code',
-    scope: 'openid email profile',
-    state,
-    prompt: 'select_account'
-  });
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-});
-
-app.get('/auth/google/callback', async (req, res) => {
-  try {
-    const expected = req.cookies?.athena_survey_google_state;
-    if (!expected || expected !== req.query.state) throw new Error('Invalid OAuth state.');
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
-        code: req.query.code,
-        grant_type: 'authorization_code',
-        redirect_uri: `${APP_BASE_URL}/auth/google/callback`
-      })
+  doc
+    .font('Helvetica')
+    .fontSize(8)
+    .fillColor('#64748b')
+    .text(footerText, 50, doc.page.height - 42, {
+      width: doc.page.width - 100,
+      align: 'center',
+      lineBreak: false,
+      link: url,
+      underline: false
     });
-    const tokenPayload = await tokenResponse.json();
-    if (!tokenResponse.ok) throw new Error(tokenPayload.error_description || 'Google token exchange failed.');
-    const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${tokenPayload.access_token}` }
-    });
-    const profile = await profileResponse.json();
-    if (!profileResponse.ok || !profile.email) throw new Error('Could not read Google profile.');
-    const user = await upsertGoogleUser(profile);
-    await createSession(res, user.id);
-    res.clearCookie('athena_survey_google_state', { path: '/' });
-    res.redirect('/app.html?signedIn=google');
-  } catch (error) {
-    console.error('[google:callback]', error);
-    res.redirect(`/?googleError=${encodeURIComponent(error.message)}`);
-  }
-});
 
-app.post('/api/auth/logout', requireUser, async (req, res, next) => {
-  try {
-    const t = req.cookies?.[COOKIE_NAME];
-    if (t) await query('DELETE FROM sessions WHERE token=$1', [t]);
-    res.clearCookie(COOKIE_NAME, { path: '/' });
-    res.json({ ok: true });
-  } catch (error) { next(error); }
-});
-
-app.post('/api/contact', async (req, res, next) => {
-  try {
-    const name = String(req.body.name || '').trim().slice(0, 100);
-    const email = normalizeEmail(req.body.email);
-    const message = String(req.body.message || '').trim().slice(0, 5000);
-    if (!email || !message) return res.status(400).json({ error: 'Email and message are required.' });
-    const to = process.env.CONTACT_FORM_TO || 'anu@threadwire.ai';
-    await sendMail({
-      fromEmail: email,
-      to,
-      subject: `Athena Survey contact form from ${name || email}`,
-      html: `<p><strong>Name:</strong> ${name || 'Not provided'}</p><p><strong>Email:</strong> ${email}</p><p>${message.replace(/\n/g, '<br>')}</p>`,
-      replyTo: email
-    });
-    res.json({ ok: true });
-  } catch (error) { next(error); }
-});
-
-app.post('/api/ai/survey-draft', requireUser, async (req, res, next) => {
-  try {
-    const input = {
-      topic: String(req.body.topic || '').trim().slice(0, 300),
-      description: String(req.body.description || '').trim().slice(0, 4000),
-      audience: String(req.body.audience || '').trim().slice(0, 300),
-      goal: String(req.body.goal || '').trim().slice(0, 300),
-      transcript: Array.isArray(req.body.messages) ? req.body.messages.map((m) => `${m.role}: ${m.content}`).join('\n') : ''
-    };
-    const result = await generateSurveyDraft(input);
-    await query('INSERT INTO ai_runs(user_id, run_type, input_json, output_json, model) VALUES($1,$2,$3,$4,$5)', [req.user.id, 'survey_builder', input, result.parsed, result.provider]);
-    res.json({ draft: result.parsed, provider: result.provider });
-  } catch (error) { next(error); }
-});
-
-app.get('/api/surveys', requireUser, async (req, res, next) => {
-  try {
-    const result = await query(`
-      SELECT s.*, count(DISTINCT q.id)::int AS question_count, count(DISTINCT r.id)::int AS response_count
-      FROM surveys s
-      LEFT JOIN survey_questions q ON q.survey_id = s.id
-      LEFT JOIN responses r ON r.survey_id = s.id
-      WHERE s.owner_user_id = $1 OR $2 = 'app_admin'
-      GROUP BY s.id
-      ORDER BY s.updated_at DESC, s.created_at DESC
-    `, [req.user.id, req.user.role_global]);
-    res.json({ surveys: result.rows });
-  } catch (error) { next(error); }
-});
-
-app.post('/api/surveys', requireUser, async (req, res, next) => {
-  try {
-    const usage = await canCreateSurvey(req.user);
-    if (!usage.ok) return res.status(429).json({ error: usage.plan === 'basic' ? `Basic includes ${usage.limit} surveys per month. You have used ${usage.used}. Upgrade to Pro for unlimited surveys.` : `Survey limit reached or subscription inactive. Current plan: ${usage.plan}.`, usage });
-    const organizationId = req.body.organizationId || null;
-    await assertEnterpriseCreator(req.user, organizationId);
-    const title = String(req.body.title || 'Untitled Survey').trim().slice(0, 120);
-    const description = String(req.body.description || '').trim().slice(0, 1000);
-    const aiPrompt = String(req.body.aiPrompt || '').trim().slice(0, 4000);
-    const questions = Array.isArray(req.body.questions) ? req.body.questions : [];
-    const survey = await tx(async (client) => {
-      const created = await client.query(`
-        INSERT INTO surveys(owner_user_id, organization_id, title, description, created_by_ai, ai_prompt)
-        VALUES($1,$2,$3,$4,$5,$6) RETURNING *
-      `, [req.user.id, organizationId, title, description, Boolean(req.body.createdByAi), aiPrompt]);
-      const surveyRow = created.rows[0];
-      for (let i = 0; i < questions.length; i += 1) {
-        const q = questions[i];
-        const type = ['single_choice','multi_select','tag_cloud'].includes(q.type) ? q.type : 'single_choice';
-        const qr = await client.query(`
-          INSERT INTO survey_questions(survey_id, question_text, question_type, display_order, allow_other)
-          VALUES($1,$2,$3,$4,$5) RETURNING *
-        `, [surveyRow.id, String(q.question || q.question_text || '').trim().slice(0, 300), type, i + 1, Boolean(q.allowOther)]);
-        const opts = Array.isArray(q.options) ? q.options : [];
-        for (let j = 0; j < opts.length; j += 1) {
-          const text = String(opts[j].option_text || opts[j]).trim().slice(0, 120);
-          if (text) await client.query('INSERT INTO question_options(question_id, option_text, display_order) VALUES($1,$2,$3)', [qr.rows[0].id, text, j + 1]);
-        }
-      }
-      return surveyRow;
-    });
-    res.json({ survey, usage: await canCreateSurvey(req.user) });
-  } catch (error) { next(error); }
-});
-
-app.get('/api/surveys/:id', requireUser, requireSurveyOwner, async (req, res, next) => {
-  try {
-    const questions = await query('SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY display_order, created_at', [req.survey.id]);
-    const qIds = questions.rows.map((q) => q.id);
-    const options = qIds.length ? await query('SELECT * FROM question_options WHERE question_id = ANY($1::uuid[]) ORDER BY display_order, created_at', [qIds]) : { rows: [] };
-    const links = await query('SELECT *, NULL AS qr FROM survey_share_links WHERE survey_id=$1 ORDER BY created_at DESC', [req.survey.id]);
-    res.json({ survey: req.survey, questions: questions.rows, options: options.rows, links: links.rows });
-  } catch (error) { next(error); }
-});
-
-app.patch('/api/surveys/:id', requireUser, requireSurveyOwner, async (req, res, next) => {
-  try {
-    const result = await query(`
-      UPDATE surveys SET title=COALESCE($1,title), description=COALESCE($2,description), allow_anonymous=COALESCE($3,allow_anonymous), show_live_results=COALESCE($4,show_live_results), updated_at=now()
-      WHERE id=$5 RETURNING *
-    `, [req.body.title ?? null, req.body.description ?? null, req.body.allowAnonymous ?? null, req.body.showLiveResults ?? null, req.survey.id]);
-    res.json({ survey: result.rows[0] });
-  } catch (error) { next(error); }
-});
-
-async function updateSurveyStatus(req, res, status) {
-  const payload = await tx(async (client) => {
-    const surveyResult = await client.query(`
-      UPDATE surveys
-      SET
-        status = $1,
-        closed_at = CASE WHEN $1 = 'closed' THEN now() ELSE closed_at END,
-        current_active_question_id = CASE WHEN $1 = 'closed' THEN NULL ELSE current_active_question_id END,
-        updated_at = now()
-      WHERE id = $2
-      RETURNING *
-    `, [status, req.survey.id]);
-
-    let completedQuestions = [];
-    if (status === 'closed') {
-      const questionResult = await client.query(`
-        UPDATE survey_questions
-        SET
-          status = 'completed',
-          completed_at = COALESCE(completed_at, now()),
-          updated_at = now()
-        WHERE survey_id = $1
-          AND status <> 'completed'
-        RETURNING *
-      `, [req.survey.id]);
-      completedQuestions = questionResult.rows;
-    }
-
-    return {
-      survey: surveyResult.rows[0],
-      completedQuestions
-    };
-  });
-
-  io.to(`survey:${req.survey.id}`).emit('survey:status', payload.survey);
-
-  if (status === 'closed') {
-    io.to(`survey:${req.survey.id}`).emit('question:activated', null);
-    for (const question of payload.completedQuestions) {
-      io.to(`survey:${req.survey.id}`).emit('question:status', question);
-      await broadcastQuestionResults(io, question.id);
-    }
-  }
-
-  res.json(payload);
+  doc.x = oldX;
+  doc.y = oldY;
 }
-app.post('/api/surveys/:id/activate', requireUser, requireSurveyOwner, (req, res, next) => updateSurveyStatus(req, res, 'active').catch(next));
-app.post('/api/surveys/:id/inactivate', requireUser, requireSurveyOwner, (req, res, next) => updateSurveyStatus(req, res, 'inactive').catch(next));
-app.post('/api/surveys/:id/close', requireUser, requireSurveyOwner, (req, res, next) => updateSurveyStatus(req, res, 'closed').catch(next));
-
-app.post('/api/surveys/:id/questions', requireUser, requireSurveyOwner, async (req, res, next) => {
-  try {
-    const type = ['single_choice','multi_select','tag_cloud'].includes(req.body.questionType || req.body.type) ? (req.body.questionType || req.body.type) : 'single_choice';
-    const count = await query('SELECT COALESCE(max(display_order),0)+1 AS next_order FROM survey_questions WHERE survey_id=$1', [req.survey.id]);
-    const q = await query(`
-      INSERT INTO survey_questions(survey_id, question_text, question_type, display_order, allow_other)
-      VALUES($1,$2,$3,$4,$5) RETURNING *
-    `, [req.survey.id, String(req.body.questionText || req.body.question || '').trim().slice(0, 300), type, count.rows[0].next_order, Boolean(req.body.allowOther)]);
-    const question = q.rows[0];
-    const opts = Array.isArray(req.body.options) ? req.body.options : [];
-    for (let i = 0; i < opts.length; i += 1) {
-      const text = String(opts[i]).trim().slice(0, 120);
-      if (text) await query('INSERT INTO question_options(question_id, option_text, display_order) VALUES($1,$2,$3)', [question.id, text, i + 1]);
-    }
-    res.json({ question });
-  } catch (error) { next(error); }
-});
-
-app.patch('/api/questions/:questionId', requireUser, async (req, res, next) => {
-  try {
-    const q = await query('SELECT q.*, s.owner_user_id FROM survey_questions q JOIN surveys s ON s.id=q.survey_id WHERE q.id=$1', [req.params.questionId]);
-    const question = q.rows[0];
-    if (!question) return res.status(404).json({ error: 'Question not found.' });
-    if (question.owner_user_id !== req.user.id && req.user.role_global !== 'app_admin') return res.status(403).json({ error: 'No access.' });
-    const updated = await tx(async (client) => {
-      const ur = await client.query(`
-        UPDATE survey_questions SET question_text=COALESCE($1,question_text), question_type=COALESCE($2,question_type), allow_other=COALESCE($3,allow_other), show_results=COALESCE($4,show_results), updated_at=now()
-        WHERE id=$5 RETURNING *
-      `, [req.body.questionText ?? null, req.body.questionType ?? null, req.body.allowOther ?? null, req.body.showResults ?? null, req.params.questionId]);
-      if (Array.isArray(req.body.options)) {
-        await client.query('DELETE FROM question_options WHERE question_id=$1', [req.params.questionId]);
-        for (let i = 0; i < req.body.options.length; i += 1) {
-          const text = String(req.body.options[i]).trim().slice(0, 120);
-          if (text) await client.query('INSERT INTO question_options(question_id, option_text, display_order) VALUES($1,$2,$3)', [req.params.questionId, text, i + 1]);
-        }
-      }
-      return ur.rows[0];
-    });
-    await broadcastQuestionResults(io, req.params.questionId);
-    res.json({ question: updated });
-  } catch (error) { next(error); }
-});
-
-async function setQuestionStatus(questionId, user, status) {
-  return tx(async (client) => {
-    const q = await client.query('SELECT q.*, s.owner_user_id FROM survey_questions q JOIN surveys s ON s.id=q.survey_id WHERE q.id=$1', [questionId]);
-    const question = q.rows[0];
-    if (!question) throw new Error('Question not found.');
-    if (question.owner_user_id !== user.id && user.role_global !== 'app_admin') throw new Error('No access.');
-    if (status === 'active') {
-      await client.query(`UPDATE survey_questions SET status='inactive', updated_at=now() WHERE survey_id=$1 AND id <> $2 AND status='active'`, [question.survey_id, questionId]);
-      await client.query(`UPDATE surveys SET status='active', current_active_question_id=$1, updated_at=now() WHERE id=$2`, [questionId, question.survey_id]);
-    }
-    const result = await client.query(`
-      UPDATE survey_questions SET status=$1, activated_at=CASE WHEN $1='active' THEN now() ELSE activated_at END, completed_at=CASE WHEN $1 IN ('completed','closed') THEN now() ELSE completed_at END, updated_at=now()
-      WHERE id=$2 RETURNING *
-    `, [status, questionId]);
-    if (status !== 'active') {
-      await client.query(`UPDATE surveys SET current_active_question_id = CASE WHEN current_active_question_id=$1 THEN NULL ELSE current_active_question_id END, updated_at=now() WHERE id=$2`, [questionId, question.survey_id]);
-    }
-    return result.rows[0];
-  });
-}
-
 function questionStatusRoute(status) {
   return async (req, res, next) => {
     try {
@@ -970,114 +580,6 @@ app.get('/api/surveys/:id/results', requireUser, requireSurveyOwner, async (req,
     res.json({ survey: req.survey, questions: questions.rows, results });
   } catch (error) { next(error); }
 });
-
-
-app.get('/api/surveys/:id/export.pdf', requireUser, requireSurveyOwner, async (req, res, next) => {
-  try {
-    const questions = await query(
-      'SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY display_order, created_at',
-      [req.survey.id]
-    );
-
-    const results = {};
-    for (const q of questions.rows) {
-      results[q.id] = await calculateQuestionResults(q.id);
-    }
-
-    const filename = `${String(req.survey.title || 'survey')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 60) || 'survey'}-results.pdf`;
-
-    const doc = new PDFDocument({
-      size: 'LETTER',
-      margin: 50,
-      autoFirstPage: true,
-      info: {
-        Title: `${req.survey.title || 'Survey'} - Results`,
-        Author: 'Athena Survey',
-        Subject: `Survey results export from ${reportAppUrl()}`,
-        Keywords: 'Athena Survey, AI polls, live surveys, QR surveys, audience insights'
-      }
-    });
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-    doc.pipe(res);
-
-    drawReportCoverPage(doc, req.survey, questions.rows);
-
-    for (let i = 0; i < questions.rows.length; i += 1) {
-      const question = questions.rows[i];
-      const result = results[question.id];
-
-      doc.addPage();
-      addPdfFooter(doc);
-
-      doc.font('Helvetica').fontSize(9).fillColor('#64748b')
-        .text(`Question ${i + 1} • ${question.question_type} • ${question.status}`, 50, 58);
-
-      doc.font('Helvetica-Bold').fontSize(18).fillColor('#0f172a')
-        .text(pdfSafe(question.question_text), 50, 84, {
-          width: 500,
-          lineGap: 4
-        });
-
-      let y = doc.y + 24;
-
-      if (result?.tags) {
-        doc.font('Helvetica-Bold').fontSize(12).fillColor('#334155').text('Tag cloud', 50, y);
-        y += 24;
-        y = drawTagCloudPdf(doc, result.tags, 50, y, 500);
-
-        if (result.tags.length) {
-          doc.font('Helvetica-Bold').fontSize(11).fillColor('#334155').text('Top themes', 50, y);
-          y += 20;
-
-          result.tags.slice(0, 10).forEach((tag) => {
-            doc.font('Helvetica').fontSize(10).fillColor('#475569')
-              .text(`${titleCaseTag(tag.text)} - ${tag.count}`, 64, y, { width: 430 });
-            y = doc.y + 5;
-          });
-        }
-      } else if (result?.options) {
-        const total = Number(result.totalSelections || 0);
-
-        doc.font('Helvetica-Bold').fontSize(12).fillColor('#334155')
-          .text(`Total selections: ${total}`, 50, y);
-
-        y += 28;
-
-        result.options.forEach((option) => {
-          if (y > 705) {
-            doc.addPage();
-            addPdfFooter(doc);
-            y = 60;
-          }
-
-          y = drawBarResultPdf(
-            doc,
-            option.option_text,
-            Number(option.count || 0),
-            Number(option.pct || 0),
-            50,
-            y,
-            500
-          );
-        });
-      } else {
-        doc.font('Helvetica').fontSize(10).fillColor('#64748b').text('No results yet.', 50, y);
-      }
-    }
-
-    doc.end();
-  } catch (error) {
-    next(error);
-  }
-});
-
 
 app.post('/api/surveys/:id/analyze', requireUser, requireSurveyOwner, async (req, res, next) => {
   try {
@@ -1308,12 +810,197 @@ app.get('/api/admin/tiers', requireAppAdmin, (req, res) => {
   });
 });
 
+
+app.get('/api/surveys/:id/export.pdf', requireUser, requireSurveyOwner, async (req, res, next) => {
+  try {
+    const questions = await query(
+      'SELECT * FROM survey_questions WHERE survey_id=$1 ORDER BY display_order, created_at',
+      [req.survey.id]
+    );
+
+    const results = {};
+    for (const q of questions.rows) {
+      results[q.id] = await calculateQuestionResults(q.id);
+    }
+
+    const filename = `${String(req.survey.title || 'survey')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 60) || 'survey'}-results.pdf`;
+
+    const doc = new PDFDocument({
+      size: 'LETTER',
+      margin: 50,
+      autoFirstPage: true,
+      info: {
+        Title: `${req.survey.title || 'Survey'} - Results`,
+        Author: 'Athena Survey',
+        Subject: `Survey results export from ${reportAppUrl()}`,
+        Keywords: 'Athena Survey, AI polls, live surveys, QR surveys, audience insights'
+      }
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    doc.pipe(res);
+
+    drawReportCoverPage(doc, req.survey, questions.rows);
+
+    for (let i = 0; i < questions.rows.length; i += 1) {
+      const question = questions.rows[i];
+      const result = results[question.id];
+
+      doc.addPage();
+      addPdfFooter(doc);
+
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor('#64748b')
+        .text(`Question ${i + 1} • ${question.question_type} • ${question.status}`, 50, 58);
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(18)
+        .fillColor('#0f172a')
+        .text(pdfSafe(question.question_text), 50, 84, {
+          width: 500,
+          lineGap: 4
+        });
+
+      let y = doc.y + 24;
+
+      if (result?.tags) {
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(12)
+          .fillColor('#334155')
+          .text('Tag cloud', 50, y);
+
+        y += 24;
+        y = drawTagCloudPdf(doc, result.tags, 50, y, 500);
+
+        if (result.tags.length) {
+          doc
+            .font('Helvetica-Bold')
+            .fontSize(11)
+            .fillColor('#334155')
+            .text('Top themes', 50, y);
+
+          y += 20;
+
+          result.tags.slice(0, 10).forEach((tag) => {
+            doc
+              .font('Helvetica')
+              .fontSize(10)
+              .fillColor('#475569')
+              .text(`${titleCaseTag(tag.text)} - ${tag.count}`, 64, y, { width: 430 });
+            y = doc.y + 5;
+          });
+        }
+      } else if (result?.options) {
+        const total = Number(result.totalSelections || 0);
+
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(12)
+          .fillColor('#334155')
+          .text(`Total selections: ${total}`, 50, y);
+
+        y += 28;
+
+        result.options.forEach((option) => {
+          if (y > 705) {
+            doc.addPage();
+            addPdfFooter(doc);
+            y = 60;
+          }
+
+          y = drawBarResult(
+            doc,
+            option.option_text,
+            Number(option.count || 0),
+            Number(option.pct || 0),
+            50,
+            y,
+            500
+          );
+        });
+      } else {
+        doc
+          .font('Helvetica')
+          .fontSize(10)
+          .fillColor('#64748b')
+          .text('No results yet.', 50, y);
+      }
+    }
+
+    doc.end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 // Direct routes keep marketing and app surfaces separate, without SPA catch-all confusion.
 app.get('/s/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'public-survey.html')));
 app.get('/q/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'public-question.html')));
 app.get('/live/:token', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'live-results.html')));
 app.get('/app', (req, res) => res.redirect('/app.html'));
 app.get('/app/:page', (req, res) => res.sendFile(path.join(PUBLIC_DIR, `${req.params.page}.html`)));
+
+
+function drawReportCoverPage(doc, survey, questions) {
+  const url = reportAppUrl ? reportAppUrl() : String(process.env.APP_BASE_URL || 'https://survey.athenabot.ai').replace(/\/$/, '');
+
+  doc.rect(0, 0, doc.page.width, 170).fill('#eef2ff');
+  doc.circle(485, 72, 92).fill('#dbeafe');
+  doc.circle(86, 125, 48).fill('#ede9fe');
+
+  doc.roundedRect(50, 52, 48, 48, 14).fill('#2563eb');
+  doc.font('Helvetica-Bold').fontSize(24).fillColor('#ffffff').text('A', 65, 64, { width: 20, align: 'center' });
+
+  doc.font('Helvetica-Bold').fontSize(22).fillColor('#0f172a').text('Athena Survey', 112, 55);
+  doc.font('Helvetica').fontSize(10).fillColor('#475569')
+    .text('AI-powered live polls, QR surveys, and real-time audience insights.', 112, 84);
+
+  doc.font('Helvetica-Bold').fontSize(28).fillColor('#0f172a')
+    .text(pdfSafe(survey.title || 'Survey Results'), 50, 205, { width: 500, lineGap: 4 });
+
+  doc.font('Helvetica').fontSize(12).fillColor('#475569')
+    .text(`Survey status: ${survey.status}`, 50, doc.y + 18)
+    .text(`Questions: ${questions.length}`)
+    .text(`Exported: ${new Date().toLocaleString()}`);
+
+  if (survey.description) {
+    doc.moveDown();
+    doc.fontSize(11).fillColor('#334155').text(pdfSafe(survey.description), {
+      width: 500,
+      lineGap: 3
+    });
+  }
+
+  const boxY = Math.max(doc.y + 34, 425);
+
+  doc.roundedRect(50, boxY, 500, 135, 18).fill('#f8fafc').stroke('#e2e8f0');
+
+  doc.font('Helvetica-Bold').fontSize(15).fillColor('#0f172a')
+    .text('Create reports like this with Athena Survey', 74, boxY + 24);
+
+  doc.font('Helvetica').fontSize(11).fillColor('#334155')
+    .text('• Talk to AI and let it create the right survey questions', 74, boxY + 54)
+    .text('• Share instantly with a QR code or public link')
+    .text('• Show live charts, tag clouds, and audience results')
+    .text('• Export branded PDF reports for teams, customers, and events');
+
+  doc.font('Helvetica-Bold').fontSize(11).fillColor('#2563eb')
+    .text(url, 74, boxY + 112, { link: url, underline: true });
+
+  addPdfFooter(doc);
+}
+
 
 app.use((error, req, res, next) => {
   console.error('[error]', error);

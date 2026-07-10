@@ -25,12 +25,12 @@
             <h1>Responses</h1>
             <p class="muted">${Athena.escapeHtml(d.survey.title || '')} • Live results and AI analysis.</p>
           </div>
-          <div class="row">
-            <a class="btn primary" href="/api/surveys/${id}/export.pdf" target="_blank">Export PDF</a>
-            <button class="btn soft" id="analyze">Analyze with AI</button>
-            <a class="btn soft" href="/survey-share.html?id=${id}">Share / QR</a>
-            <a class="btn soft" href="/survey-detail.html?id=${id}">Back</a>
-          </div>
+	  <div class="row">
+  		 <a class="btn primary" href="/api/surveys/${id}/export.pdf" target="_blank">Export PDF</a>
+		 <button class="btn soft" id="analyze">Analyze with AI</button>
+ 		 <a class="btn soft" href="/survey-share.html?id=${id}">Share / QR</a>
+  		 <a class="btn soft" href="/survey-detail.html?id=${id}">Back</a>
+	  </div>
         </div>
 
         <div id="analysis"></div>
