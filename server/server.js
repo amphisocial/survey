@@ -19,6 +19,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { query, tx } = require('./db');
 const { sendMail } = require('./mailer');
 const { generateSurveyDraft, analyzeResults, tagCloudFromTexts } = require('./ai');
+const registerClassicSurveys = require('./classic-surveys');
 
 const PORT = Number(process.env.PORT || 3010);
 const APP_BASE_URL = (process.env.APP_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
@@ -1306,6 +1307,22 @@ app.get('/api/admin/tiers', requireAppAdmin, (req, res) => {
       enterprise: { ...PLAN_LIMITS.enterprise, stripePrice: STRIPE_PRICE_ENTERPRISE || null, startingPrice: Number(process.env.ENTERPRISE_STARTING_PRICE || 49.99) }
     }
   });
+});
+
+
+registerClassicSurveys({
+  app,
+  PUBLIC_DIR,
+  APP_BASE_URL,
+  query,
+  tx,
+  currentUser,
+  requireUser,
+  requireSurveyOwner,
+  normalizeEmail,
+  token,
+  calculateQuestionResults,
+  sendMail
 });
 
 // Direct routes keep marketing and app surfaces separate, without SPA catch-all confusion.

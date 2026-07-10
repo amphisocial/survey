@@ -15,6 +15,16 @@
   }
 
   async function getOrCreateSurveyLink(surveyData) {
+    const mode = surveyData.survey.survey_mode || 'live';
+
+    if (mode === 'classic') {
+      const existing = (surveyData.links || []).find(l => l.scope === 'classic_survey' && l.is_active);
+      if (existing) return `${location.origin}/take/${existing.token}`;
+
+      const created = await Athena.api(`/api/surveys/${id}/classic-share-link`, { method: 'POST' });
+      return created.url;
+    }
+
     const existing = (surveyData.links || []).find(l => l.scope === 'survey' && l.is_active);
     if (existing) return `${location.origin}/s/${existing.token}`;
 
@@ -124,7 +134,8 @@ Thank you.`;
     Athena.$('#send').onclick = async () => {
       try {
         Athena.$('#err').textContent = '';
-        const r = await Athena.api(`/api/surveys/${id}/send-email`, {
+        const sendPath = surveyData.survey.survey_mode === 'classic' ? `/api/surveys/${id}/classic-send-email` : `/api/surveys/${id}/send-email`;
+        const r = await Athena.api(sendPath, {
           method: 'POST',
           body: JSON.stringify({
             emails: Athena.$('#emails').value,

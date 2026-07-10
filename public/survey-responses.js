@@ -27,6 +27,8 @@
           </div>
           <div class="row">
             <a class="btn primary" href="/api/surveys/${id}/export.pdf" target="_blank">Export PDF</a>
+            ${(d.survey.survey_mode || 'live') === 'classic' && d.survey.report_status !== 'published' ? '<button class="btn primary" id="publishReport">Publish Report</button>' : ''}
+            ${(d.survey.survey_mode || 'live') === 'classic' && d.survey.report_status === 'published' ? '<button class="btn soft" id="unpublishReport">Unpublish Report</button>' : ''}
             <button class="btn soft" id="analyze">Analyze with AI</button>
             <a class="btn soft" href="/survey-share.html?id=${id}">Share / QR</a>
             <a class="btn soft" href="/survey-detail.html?id=${id}">Back</a>
@@ -47,6 +49,9 @@
           }
         </div>
       `);
+
+      Athena.$('#publishReport')?.addEventListener('click', () => Athena.api(`/api/surveys/${id}/publish-report`, { method: 'POST' }).then(render).catch(e => Athena.toast(e.message)));
+      Athena.$('#unpublishReport')?.addEventListener('click', () => Athena.api(`/api/surveys/${id}/unpublish-report`, { method: 'POST' }).then(render).catch(e => Athena.toast(e.message)));
 
       Athena.$('#analyze').onclick = async () => {
         try {
